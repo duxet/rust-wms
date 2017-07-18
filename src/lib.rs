@@ -7,8 +7,10 @@ extern crate tokio_core;
 extern crate url;
 
 pub mod capabilities;
+pub mod tile;
 
 use futures::Future;
+use futures::Stream;
 use self::hyper::Client as HyperClient;
 use self::hyper::client::{HttpConnector};
 
@@ -47,8 +49,8 @@ impl<'a> Client<'a> {
     /// ```
     /// let mut client = wms::Client::new("http://sampleserver/wms");
     ///
-    /// client.get_capabilities(|res| {
-    ///    println!("Response status: {}", res.status());
+    /// client.get_capabilities(|cap| {
+    ///    println!("WMS service capabilities: {}", cap);
     /// });
     /// ```
     pub fn get_capabilities<F>(&mut self, callback: F) where F: Fn(self::hyper::Response) {
@@ -59,11 +61,18 @@ impl<'a> Client<'a> {
         self.core.run(work).unwrap();
     }
 
-    pub fn get_map<F>(&mut self, callback: F) where F: Fn(self::hyper::Response) {
+    pub fn get_map<F>(&mut self, callback: F) where F: Fn(tile::Tile) {
         let url = url::Url::parse_with_params(self.base_url, &[("version", VERSION), ("request", "GetMap")]).unwrap();
         let url = url.into_string().parse::<hyper::Uri>().unwrap();
 
-        let work = self.hyper.get(url).map(callback);
+        let work = self.hyper.get(url).map(|response| {
+            let mut work = response.body().concat2().map(|body| {
+                let tile = tile::Tile { image: &*body.to_vec() };
+                callback(tile);
+            });
+
+            work.poll().unwrap();
+        });
         self.core.run(work).unwrap();
     }
 }
